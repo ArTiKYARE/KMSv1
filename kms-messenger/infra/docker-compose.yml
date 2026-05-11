@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: kms-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-kms_admin}
+      POSTGRES_PASSWORD: ${DB_PASS:-secure_password_change_me}
+      POSTGRES_DB: ${DB_NAME:-kms_db}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - kms-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-kms_admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: kms-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - kms-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kms-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgres://${DB_USER:-kms_admin}:${DB_PASS:-secure_password_change_me}@db:5432/${DB_NAME:-kms_db}?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-super_secret_key_change_in_prod}
+      - JWT_EXPIRY=${JWT_EXPIRY:-15m}
+      - REFRESH_TOKEN_EXPIRY=${REFRESH_TOKEN_EXPIRY:-7d}
+      - APP_ENV=${APP_ENV:-development}
+      - SERVER_PORT=8080
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - kms-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kms-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - kms-network
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
+
+networks:
+  kms-network:
+    driver: bridge
